@@ -21,6 +21,7 @@ volatile int direction = 0;   // 0 = CW, 1 = CCW
 
 volatile int currentA = 0;
 volatile int currentB = 0;
+volatile int newPulse = 0;    // For new encoder data
 
 // Function prototypes
 void setupGPIO(void);
@@ -35,8 +36,8 @@ void setupGPIO(void) {
     pinMode(ENCODER_B, GPIO_INPUT);
 
     // Optional: pull-ups to prevent floating inputs
-    // GPIOA->PUPDR |= _VAL2FLD(GPIO_PUPDR_PUPD8, 0b01);
-    // GPIOA->PUPDR |= _VAL2FLD(GPIO_PUPDR_PUPD6, 0b01);
+    GPIOA->PUPDR |= _VAL2FLD(GPIO_PUPDR_PUPD8, 0b01);
+    GPIOA->PUPDR |= _VAL2FLD(GPIO_PUPDR_PUPD6, 0b01);
 }
 
 // Setup TIM6
@@ -104,7 +105,7 @@ void checkDirection(int newA, int newB) {
 
 // Interrupt Service Routine (ISR) for interrupt handler
 void EXTI9_5_IRQHandler(void) {
-    int newA = digitalRead(ENCODER_A);  // Initially read the encoder states as a baseline
+    int newA = digitalRead(ENCODER_A);  // Initially read the encoder states for a baseline reading
     int newB = digitalRead(ENCODER_B);
     
     // Check that the button was what triggered our interrupt (EXTI6, B as listed in macros #define)
@@ -116,38 +117,55 @@ void EXTI9_5_IRQHandler(void) {
         checkDirection(newA, newB);
         deltaTime = COUNT_TIM->CNT;    // Capture elapsed time between pulses in deltaTime
         COUNT_TIM->CNT = 0;            // Reset counter
+        newPulse = 1;                  // New pulse detected
     }
     
-    // Check that the button was what triggered our interrupt (EXTI6, B as listed in macros #define)
+    // Check that the button was what triggered our interrupt (EXTI8, A as listed in macros #define)
     if (EXTI->PR1 & (1 << 8)) {
         // If so, clear the interrupt (NB: Write 1 to reset.)
         EXTI->PR1 |= (1 << 8);         // Clear interrupt
         pulses++;
 
         checkDirection(newA, newB);
-        deltaTime = COUNT_TIM->CNT;
-        COUNT_TIM->CNT = 0;
+        deltaTime = COUNT_TIM->CNT;    // Capture elapsed time between pulses in deltaTime
+        COUNT_TIM->CNT = 0;            // Reset counter
+        newPulse = 1;                  // New pulse detected
     }
+}
+
+// Function used by printf to send characters to the laptop
+int _write(int file, char *ptr, int len) {
+  int i = 0;
+  for (i = 0; i < len; i++) {
+    ITM_SendChar((*ptr++));
+  }
+  return len;
 }
 
 // Main function serves to read results and print them every 500ms = 0.5s
 int main(void) {
+    // printf("test");
+    // printf("test");
+
     // INitializing functions
     setupGPIO();
     setupTIM6();
     setupInterrupts();
 
+    float lastRPM = 0;
+
     while (1) {
-        if (deltaTime > 0) {
+        if (newPulse) {  // Only update when new data is ready
 
             float RPS = 1.0 / (deltaTime * 0.000001); // Convert us to s for Revolutions Per Second (rps)
-            float RPM = RPS * 60.0;
-            
-            // Print on console
-            printf("RPM: %.2f, Direction: %s\n", RPM, direction ? "CCW" : "CW");  // CW = 0, CCW = 1, defined in FSM
+
+            lastRPM = RPS * 60.0;
+            newPulse = 0; // Reset the new signal flag 
         }
 
-        pulses = 0;
-        delay_millis(DELAY_TIM, 500);   // Allow some time to process and print, avoid overwelming with data (for readability)
+        // Print latest RPM and direction continuously
+        printf("RPM: %.2f, Direction: %s\n", lastRPM, direction ? "CCW" : "CW"); // Print and return a new line
+
+        delay_millis(DELAY_TIM, 500);   // Allow some time to process and print, avoid overwelming with data (also for readability)
     }
 }
