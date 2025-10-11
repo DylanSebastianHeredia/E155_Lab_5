@@ -78,6 +78,10 @@ void EXTI9_5_IRQHandler(void) {
     newA = digitalRead(ENCODER_A);
     newB = digitalRead(ENCODER_B);
 
+    // Clear interrupt flags for both lines
+    if (EXTI->PR1 & (1 << 8)) EXTI->PR1 |= (1 << 8); // PA8
+    if (EXTI->PR1 & (1 << 6)) EXTI->PR1 |= (1 << 6); // PA6
+
     // Determine direction
     if (!lastA && !lastB) {
         if (newA && !newB) direction = 0;           // CW
@@ -103,10 +107,6 @@ void EXTI9_5_IRQHandler(void) {
     lastB = newB;
 
     counter++;
-
-    // Clear interrupt flags for both lines
-    if (EXTI->PR1 & (1 << 8)) EXTI->PR1 |= (1 << 8); // PA8
-    if (EXTI->PR1 & (1 << 6)) EXTI->PR1 |= (1 << 6); // PA6
 }
 
 // Compute velocity as rev/sec
