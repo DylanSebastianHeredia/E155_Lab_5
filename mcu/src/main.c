@@ -18,7 +18,7 @@
 // Defining Global variables
 volatile int32_t counter = 0;   // Encoder pulse counter
 volatile int direction = 0;     // 0 = CW, 1 = CCW
-
+ 
 // Previous encoder states
 volatile int newA = 0;
 volatile int newB = 0;
