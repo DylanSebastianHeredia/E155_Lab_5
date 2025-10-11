@@ -2,7 +2,6 @@
 // dheredia@g.hmc.edu
 // October 7, 2025
 // main.c contains code to measure motor rev/sec and determine spin direction of a quadrature encoder using interrupts.
-// Uses only one timer (TIM2) for timing.
 
 #include "STM32L432KC.h"
 #include "stm32l432xx.h"
