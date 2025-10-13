@@ -18,12 +18,12 @@
 // Defining Global variables
 volatile int32_t counter = 0;    // Encoder pulse counter
 volatile int direction = 0;      // 0 = CW, 1 = CCW
-volatile int held_direction = 0; // Last known direction held when stopped
-volatile int newPulse = 0;       // Flag indicating new pulse detected
 
 // Previous encoder states
 volatile int lastA = 0;
 volatile int lastB = 0;
+volatile int newA = 0;
+volatile int newB = 0;
 
 // Function prototypes
 void setupGPIO(void);
@@ -78,8 +78,8 @@ void setupInterrupts(void) {
 // Trigger, side effects
 
 void EXTI9_5_IRQHandler(void) {
-    int newA = digitalRead(ENCODER_A);
-    int newB = digitalRead(ENCODER_B);
+    newA = digitalRead(ENCODER_A);
+    newB = digitalRead(ENCODER_B);
     togglePin(INTERRUPT_PIN);
 
     // Determine direction
