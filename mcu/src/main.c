@@ -8,20 +8,20 @@
 #include <stdio.h>
 
 // Defining Macros
-#define ENCODER_A  8    // Encoders produce square waves (to detect rotation & direction)
-#define ENCODER_B  6
+#define ENCODER_A  PA8    // Encoders produce square waves (to detect rotation & direction)
+#define ENCODER_B  PA6
 #define DELAY_TIM  TIM2   // Use only TIM2
 #define PPR 408           // Pulses per revolution (set to your encoder's PPR)
-#define POLLING_PIN 4
-#define INTERRUPT_PIN 5
+#define POLLING_PIN 4     // Polling toggle for test
+#define INTERRUPT_PIN 5   // Interrupt toggle for test
 
 // Defining Global variables
-volatile int32_t counter = 0;   // Encoder pulse counter
-volatile int direction = 0;     // 0 = CW, 1 = CCW
- 
+volatile int32_t counter = 0;    // Encoder pulse counter
+volatile int direction = 0;      // 0 = CW, 1 = CCW
+volatile int held_direction = 0; // Last known direction held when stopped
+volatile int newPulse = 0;       // Flag indicating new pulse detected
+
 // Previous encoder states
-volatile int newA = 0;
-volatile int newB = 0;
 volatile int lastA = 0;
 volatile int lastB = 0;
 
@@ -37,6 +37,8 @@ void setupGPIO(void) {
     gpioEnable(GPIO_PORT_A);
     pinMode(ENCODER_A, GPIO_INPUT);
     pinMode(ENCODER_B, GPIO_INPUT);
+    pinMode(5, GPIO_OUTPUT);
+    pinMode(4, GPIO_OUTPUT);
 
     // Initialize lastA/lastB
     lastA = digitalRead(ENCODER_A);
@@ -46,12 +48,12 @@ void setupGPIO(void) {
 // Setup TIM2 (used for delays and time measurement)
 void setupTIM2(void) {
     RCC->APB1ENR1 |= RCC_APB1ENR1_TIM2EN;   // Enable TIM2 clock
-    initTIM(DELAY_TIM);                      // Use built-in initTIM() function
+    initTIM(DELAY_TIM);                     // Use built-in initTIM() function
 }
 
 // Configure external interrupts for encoder signals
 void setupInterrupts(void) {
-    RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN; // Enable (System Config. Controller) SYSCFG to start
+    RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN;   // Enable (System Config. Controller) SYSCFG to start
 
     // Mapping external interrupt (EXTI) to the respective encoder pins
     // Changes on these pins auto call the interrupt handler
@@ -59,33 +61,31 @@ void setupInterrupts(void) {
     SYSCFG->EXTICR[1] |= _VAL2FLD(SYSCFG_EXTICR2_EXTI6, 0b000);   // 0b000 is Port A, connect EXTI6 to Port A
     SYSCFG->EXTICR[2] |= _VAL2FLD(SYSCFG_EXTICR3_EXTI8, 0b000);
 
-    EXTI->IMR1 |= (1 << gpioOffset(ENCODER_A)) | (1 << gpioOffset(ENCODER_B));     // Unmask EXTI lines 6 and 8 so interrupts can be generated for pins PA6 and PA8
+    EXTI->IMR1 |= (1 << gpioPinOffset(ENCODER_A)) | (1 << gpioPinOffset(ENCODER_B));      // Unmask EXTI lines 6 and 8 so interrupts can be generated for pins PA6 and PA8
 
     // Triggering interrupt on rising or falling edge (handler runs on every transition)
-    EXTI->RTSR1 |= (1 << gpioOffset(ENCODER_A)) | (1 << gpioOffset(ENCODER_B));
-    // EXTI->FTSR1 |= (1 << 6) | (1 << 8);
+    EXTI->RTSR1 |= (1 << gpioPinOffset(ENCODER_A)) | (1 << gpioPinOffset(ENCODER_B));
+    EXTI->FTSR1 |= (1 << gpioPinOffset(ENCODER_A)) | (1 << gpioPinOffset(ENCODER_B));
 
-    NVIC->ISER[0] |= (1 << EXTI9_5_IRQn);  // Enable EXTI lines 5–9 in Nested Vector Interrupt Controller (NVIC), lets CPU respond to EXTI actions
+    NVIC_EnableIRQ(EXTI9_5_IRQn);           // Enable EXTI lines 5–9 in Nested Vector Interrupt Controller (NVIC), lets CPU respond to EXTI actions
     __enable_irq();                         // Enabling global interrupts (now interrupts can actually happen)
 }
 
 // Interrupt Service Routine (ISR) for encoder edge
-// Triggers on ENCODER_A and ENCODER_B rising and falling edges
-// Outputs direction (CW = 0, CCW = 1)
+
+// Determines direction by comparing initial values of ENCODER_A and ENCODER_B to the 
+// values of ENCODER_A and ENCODER_B when the interrupt is taken.
+// Trigger, side effects
+
 void EXTI9_5_IRQHandler(void) {
-    // togglePin(INTERRUPT_PIN);
-
-    newA = digitalRead(ENCODER_A);
-    newB = digitalRead(ENCODER_B);
-
-    // Clear interrupt flags for both lines
-    if (EXTI->PR1 & (1 << 8)) EXTI->PR1 |= (1 << 8); // PA8
-    if (EXTI->PR1 & (1 << 6)) EXTI->PR1 |= (1 << 6); // PA6
+    int newA = digitalRead(ENCODER_A);
+    int newB = digitalRead(ENCODER_B);
+    togglePin(INTERRUPT_PIN);
 
     // Determine direction
     if (!lastA && !lastB) {
-        if (newA && !newB) direction = 0;           // CW
-        else if (!newA && newB) direction = 1;      // CCW
+        if (newA && !newB) direction = 0;            // CW = 0
+        else if (!newA && newB) direction = 1;       // CCW = 1
     } 
     
     else if (!lastA && lastB) {
@@ -107,12 +107,24 @@ void EXTI9_5_IRQHandler(void) {
     lastB = newB;
 
     counter++;
+
+    // Clear interrupt flags for both lines
+    if (EXTI->PR1 & (1 << gpioPinOffset(ENCODER_B))) EXTI->PR1 |= (1 << gpioPinOffset(ENCODER_B)); // PA8
+    if (EXTI->PR1 & (1 << gpioPinOffset(ENCODER_A))) EXTI->PR1 |= (1 << gpioPinOffset(ENCODER_A)); // PA6
+}
+
+// Function used by printf to send characters to the laptop
+int _write(int file, char *ptr, int len) {
+    for (int i = 0; i < len; i++) {
+        ITM_SendChar((*ptr++));
+    }
+    return len;
 }
 
 // Compute velocity as rev/sec
 void compute_velocity(void) {
-    float velocity = ((float)counter) / (PPR);
-
+    float velocity = ((float)counter) / (PPR * 4);
+  
         float signed_velocity = direction ? velocity : -velocity;
         printf("RPS: %.3f rev/s\n", signed_velocity);
 
@@ -126,10 +138,10 @@ int main(void) {
     setupInterrupts();
 
     printf("Starting\n");
-
+    
     while (1) {
-        // togglePin(POLLING_PIN);    // Comment out delay_millis below
         compute_velocity();
-        delay_millis(DELAY_TIM, 1000); // Sample every 1 second
+        togglePin(POLLING_PIN);
+        delay_millis(DELAY_TIM, 1000);
     }
 }
